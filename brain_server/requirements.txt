@@ -1,0 +1,2 @@
+# Brain Server Dependencies
+# FastAPI, Ollama, ChromaDB, LangChain, Watchdog

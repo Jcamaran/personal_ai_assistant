@@ -1,0 +1,2 @@
+# Edge Client Dependencies (Raspberry Pi)
+# Picovoice Porcupine, PyAudio, GPIO libraries
