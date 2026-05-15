@@ -2,3 +2,12 @@
 # Endpoints:
 # - POST /ingest: Accepts file path to chunk and add to ChromaDB
 # - POST /query: Accepts query string, performs similarity search, returns LLM response
+
+
+from fastapi import FastAPI
+
+app = FastAPI()  # ← This is missing!
+
+@app.get("/")
+def home():
+    return {"status": "ok"}

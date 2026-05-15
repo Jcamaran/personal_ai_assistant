@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # Ollama LLM Service
+  ollama:
+    image: ollama/ollama:latest
+    container_name: brain_ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - brain_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Note: Remove the deploy section above if you don't have NVIDIA GPU
+
+  # Brain Server (FastAPI + RAG)
+  brain_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brain_server
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount code for hot reload during development
+      - .:/app
+      # Persistent ChromaDB storage
+      - chroma_data:/app/vector_db
+      # Mount your Obsidian vault 
+      - C:/Users/camar/OneDrive/Documents/Obsidian Vault:/data/obsidian:ro
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - CHROMA_PERSIST_DIRECTORY=/app/vector_db
+      - WATCH_DIRECTORY=/data/obsidian
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    depends_on:
+      - ollama
+    networks:
+      - brain_network
+    restart: unless-stopped
+
+  # File Watcher Service 
+  watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brain_watcher
+    volumes:
+      - .:/app
+      - chroma_data:/app/vector_db
+      - C:/Users/camar/OneDrive/Documents/Obsidian Vault:/data/obsidian:ro
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - CHROMA_PERSIST_DIRECTORY=/app/vector_db
+      - WATCH_DIRECTORY=/data/obsidian
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    depends_on:
+      - brain_server
+    networks:
+      - brain_network
+    restart: unless-stopped
+    command: ["python", "-m", "data_sync.watcher"]
+
+volumes:
+  ollama_data:
+    driver: local
+  chroma_data:
+    driver: local
+
+networks:
+  brain_network:
+    driver: bridge
