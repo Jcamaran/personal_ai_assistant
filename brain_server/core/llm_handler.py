@@ -1,15 +1,16 @@
 # Ollama API integration
 # Handles LLM calls to local Llama 3 model
 import logging 
-import ollama
+import httpx
 import os 
 from .logger import setup_logger
 
 DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:3B")  # Default to llama3.2 3B if not specified in .env
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 logger = setup_logger(__name__)
 
-def generate_response(query: str, context: str) -> str:
+async def generate_response(query: str, context: str) -> str:
     """
     Generate a response from the LLM based on the query and retrieved context.
     
@@ -32,31 +33,57 @@ def generate_response(query: str, context: str) -> str:
         Answer:"""
     try:
         logger.info(f"Generating response with context length: {len(context)} characters")
-        response = ollama.chat(
-            model = DEFAULT_LLM_MODEL,
-            messages = [
-                {"role": "system", "content": "You are a helpful assistant that provides answers based on the user's personal notes."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature = 0.2,  # Lower temperature for more focused responses
-            num_predict = 500  # Limit response length to prevent excessively long answers
-        )
-        return response['message']['content']
+        
+        # Async HTTP call to Ollama API
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{OLLAMA_HOST}/api/chat",
+                json={
+                    "model": DEFAULT_LLM_MODEL,
+                    "messages": [
+                        {"role": "system", "content": "You are a helpful assistant that provides answers based on the user's personal notes."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.2,
+                        "num_predict": 500
+                    }
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data['message']['content']
+            
+    except httpx.HTTPError as e:
+        logger.error(f"HTTP error generating response: {e}")
+        return "I'm sorry, I couldn't connect to the LLM service."
     except Exception as e:
         logger.error(f"Error generating response: {e}")
         return "I'm sorry, I couldn't generate a response at this time."
 
 
-def check_ollama_health() -> bool:
+async def check_ollama_health() -> bool:
     """Check if the Ollama LLM service is reachable and operational"""
     try:
-        # attempt to get a response from the LLM to confirm it's working
-        models_list = ollama.list()
-        if DEFAULT_LLM_MODEL not in [model['name'] for model in models_list]:
-            logger.warning(f"Specified LLM model '{DEFAULT_LLM_MODEL}' not found in Ollama. Available models: {[model['name'] for model in models_list]}")
-            return False
-        logger.info("Ollama health check successful")
-        return True
+        # Async health check using httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{OLLAMA_HOST}/api/tags")
+            response.raise_for_status()
+            models = response.json().get('models', [])
+            
+            # Check if our model is available
+            model_names = [model['name'] for model in models]
+            if DEFAULT_LLM_MODEL not in model_names:
+                logger.warning(f"Specified LLM model '{DEFAULT_LLM_MODEL}' not found in Ollama. Available models: {model_names}")
+                return False
+                
+            logger.info("Ollama health check successful")
+            return True
+            
+    except httpx.HTTPError as e:
+        logger.error(f"Ollama health check failed (HTTP): {e}")
+        return False
     except Exception as e:
         logger.error(f"Ollama health check failed: {e}")
         return False

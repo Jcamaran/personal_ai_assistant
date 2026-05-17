@@ -4,6 +4,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from .embeddings import get_or_create_collection
 from .logger import setup_logger
+import asyncio
 import uuid
 import os
 from typing import Dict, List, Optional, Any
@@ -12,7 +13,7 @@ from typing import Dict, List, Optional, Any
 logger = setup_logger(__name__)
 
 
-def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Load a document, split into chunks, and add to ChromaDB.
     
@@ -28,10 +29,10 @@ def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -
     
     logger.info(f"Starting ingestion for: {file_path}")
     
-    # Load document
+    # Load document (run blocking I/O in thread pool)
     try:
         loader = TextLoader(file_path, encoding='utf-8')
-        documents = loader.load()
+        documents = await asyncio.to_thread(loader.load)
         logger.debug(f"Loaded {len(documents)} document(s) from {file_path}")
     except Exception as e:
         logger.error(f"Failed to load document from {file_path}: {e}")
@@ -39,7 +40,7 @@ def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -
             "success": False,
             "message": f"Failed to load document: {str(e)}",
             "file_path": file_path,
-            "chunks_created": 0,
+            "chunks_added": 0,
             "document_id": None
         }
     
@@ -59,11 +60,11 @@ def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -
             "success": False,
             "message": f"Failed to split document: {str(e)}",
             "file_path": file_path,
-            "chunks_created": 0,
+            "chunks_added": 0,
             "document_id": None
         }
     
-    # add doc to ChromaDB
+    # add doc to ChromaDB (run blocking operation in thread pool)
     try:
         collection = get_or_create_collection()
         
@@ -75,8 +76,9 @@ def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -
             for i in range(len(chunks))
         ]
         
-        # Add to collection
-        collection.add(
+        # Add to collection (blocking operation)
+        await asyncio.to_thread(
+            collection.add,
             documents=chunk_texts,
             ids=chunk_ids,
             metadatas=chunk_metadatas
@@ -88,7 +90,7 @@ def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -
             "success": True,
             "message": f"Successfully ingested {len(chunks)} chunks",
             "file_path": file_path,
-            "chunks_created": len(chunks),
+            "chunks_added": len(chunks),
             "document_id": document_id
         }
         
@@ -98,12 +100,12 @@ def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -
             "success": False,
             "message": f"Failed to add to database: {str(e)}",
             "file_path": file_path,
-            "chunks_created": 0,
+            "chunks_added": 0,
             "document_id": None
         }
 
 
-def query_documents(query: str, top_k: int = 5, filter_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def query_documents(query: str, top_k: int = 5, filter_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Search ChromaDB for relevant document chunks.
     
@@ -123,11 +125,12 @@ def query_documents(query: str, top_k: int = 5, filter_metadata: Optional[Dict[s
     try:
         collection = get_or_create_collection()
         
-        # Query ChromaDB
-        results = collection.query(
+        # Query ChromaDB (blocking operation)
+        results = await asyncio.to_thread(
+            collection.query,
             query_texts=[query],
             n_results=top_k,
-            where=filter_metadata  # Optional metadata filtering
+            where=filter_metadata
         )
         
         logger.debug(f"Retrieved {len(results['documents'][0])} results")
@@ -139,9 +142,13 @@ def query_documents(query: str, top_k: int = 5, filter_metadata: Optional[Dict[s
         sources = []
         if results['documents'] and len(results['documents'][0]) > 0:
             for i in range(len(results['documents'][0])):
+                # Extract document_id from chunk_id (format: {document_id}_chunk_{index})
+                chunk_id = results['ids'][0][i] if results.get('ids') else 'unknown'
+                document_id = chunk_id.rsplit('_chunk_', 1)[0] if '_chunk_' in chunk_id else chunk_id
+                
                 sources.append({
-                    "content": results['documents'][0][i],
-                    "file_path": results['metadatas'][0][i].get('file_path', 'unknown'),
+                    "document_id": document_id,
+                    "content_snippet": results['documents'][0][i],
                     "similarity_score": float(1 - results['distances'][0][i]) if results.get('distances') else 0.0,
                     "metadata": results['metadatas'][0][i]
                 })
