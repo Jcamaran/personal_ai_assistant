@@ -25,9 +25,9 @@ load_dotenv()
 logger = setup_logger(__name__)
 
 WATCH_DIRECTORY = os.getenv("WATCH_DIRECTORY", "/data/obsidian")
-# Folders to exclude from watching
+# folders to exclude from watching
 EXCLUDED_FOLDERS = {'.obsidian', '.trash', '.git', 'node_modules', '.DS_Store'}
-# Debounce delay to avoid multiple rapid ingestions
+# debounce delay to avoid multiple rapid ingestions
 DEBOUNCE_SECONDS = 3
 
 
@@ -138,7 +138,14 @@ class ObsidianFileHandler(FileSystemEventHandler):
             result = await ingest_document(file_path, metadata)
             
             if result.get('success'):
-                logger.info(f"✓ Successfully ingested {file_name} ({result.get('chunks_added', 0)} chunks)")
+                chunks_added = result.get('chunks_added', 0)
+                chunks_deleted = result.get('chunks_deleted', 0)
+                is_update = result.get('is_update', False)
+                
+                if is_update:
+                    logger.info(f"✓ Updated {file_name}: replaced {chunks_deleted} old chunks with {chunks_added} new chunks")
+                else:
+                    logger.info(f"✓ Ingested new file {file_name}: {chunks_added} chunks")
             else:
                 logger.error(f"✗ Failed to ingest {file_name}: {result.get('message')}")
         

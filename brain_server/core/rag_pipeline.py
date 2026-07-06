@@ -13,6 +13,55 @@ from typing import Dict, List, Optional, Any
 logger = setup_logger(__name__)
 
 
+async def delete_document_by_file_path(file_path: str) -> Dict[str, Any]:
+    """
+    Delete all chunks associated with a specific file path from ChromaDB.
+    This ensures idempotent ingestion - when a file is modified, old chunks are removed.
+    
+    Args:
+        file_path (str): Path to the file whose chunks should be deleted
+    
+    Returns:
+        dict: Deletion results with success status and count of deleted chunks
+    """
+    try:
+        collection = get_or_create_collection()
+        
+        # Query for all chunks with this file_path
+        existing = await asyncio.to_thread(
+            collection.get,
+            where={"file_path": file_path}
+        )
+        
+        if existing and existing['ids']:
+            # Delete all matching chunks
+            await asyncio.to_thread(
+                collection.delete,
+                ids=existing['ids']
+            )
+            logger.info(f"Deleted {len(existing['ids'])} existing chunks for: {file_path}")
+            return {
+                "success": True,
+                "deleted_chunks": len(existing['ids']),
+                "message": f"Deleted {len(existing['ids'])} old chunks"
+            }
+        else:
+            logger.debug(f"No existing chunks found for: {file_path}")
+            return {
+                "success": True,
+                "deleted_chunks": 0,
+                "message": "No existing chunks to delete"
+            }
+    
+    except Exception as e:
+        logger.error(f"Error deleting chunks for {file_path}: {e}")
+        return {
+            "success": False,
+            "deleted_chunks": 0,
+            "message": f"Error during deletion: {str(e)}"
+        }
+
+
 async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Load a document, split into chunks, and add to ChromaDB.
@@ -24,6 +73,10 @@ async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = N
     Returns:
         dict: Ingestion results with success status, document_id, chunks_created
     """
+    # Delete old chunks for this file before ingesting (ensures updates work correctly)
+    deletion_result = await delete_document_by_file_path(file_path)
+    deleted_count = deletion_result.get('deleted_chunks', 0)
+    
     # Generate unique document ID
     document_id = str(uuid.uuid4())
     
@@ -41,7 +94,9 @@ async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = N
             "message": f"Failed to load document: {str(e)}",
             "file_path": file_path,
             "chunks_added": 0,
-            "document_id": None
+            "chunks_deleted": deleted_count,
+            "document_id": None,
+            "is_update": False
         }
     
     # Split into chunks
@@ -61,7 +116,9 @@ async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = N
             "message": f"Failed to split document: {str(e)}",
             "file_path": file_path,
             "chunks_added": 0,
-            "document_id": None
+            "chunks_deleted": deleted_count,
+            "document_id": None,
+            "is_update": False
         }
     
     # add doc to ChromaDB (run blocking operation in thread pool)
@@ -86,12 +143,18 @@ async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = N
         
         logger.info(f"Successfully ingested {len(chunks)} chunks with document_id: {document_id}")
         
+        # Log if this was an update (had deleted chunks) vs new file
+        if deleted_count > 0:
+            logger.info(f"Updated file: replaced {deleted_count} old chunks with {len(chunks)} new chunks")
+        
         return {
             "success": True,
             "message": f"Successfully ingested {len(chunks)} chunks",
             "file_path": file_path,
             "chunks_added": len(chunks),
-            "document_id": document_id
+            "chunks_deleted": deleted_count,
+            "document_id": document_id,
+            "is_update": deleted_count > 0
         }
         
     except Exception as e:
@@ -101,7 +164,9 @@ async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = N
             "message": f"Failed to add to database: {str(e)}",
             "file_path": file_path,
             "chunks_added": 0,
-            "document_id": None
+            "chunks_deleted": deleted_count,
+            "document_id": None,
+            "is_update": False
         }
 
 

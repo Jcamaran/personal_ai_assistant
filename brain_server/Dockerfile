@@ -22,6 +22,9 @@ COPY . .
 # Create directory for ChromaDB persistent storage
 RUN mkdir -p /app/vector_db
 
+# Note: The shared package is mounted at runtime via docker-compose volume
+# and made available through PYTHONPATH environment variable
+
 # Expose FastAPI port
 EXPOSE 8000
 

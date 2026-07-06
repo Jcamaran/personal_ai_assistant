@@ -1,4 +1,3 @@
-# Configuration for Edge Client
-# brain_server_url: http://192.168.1.100:8000
-# wake_word: "hey assistant"
-# audio_settings: ...
+brain_server_url: http://localhost:8000  # Same machine
+activation_method: hotkey  # or 'tray' or 'manual'
+hotkey: ctrl+shift+space

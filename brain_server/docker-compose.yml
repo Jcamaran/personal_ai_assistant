@@ -32,6 +32,8 @@ services:
     volumes:
       # Mount code for hot reload during development
       - .:/app
+      # Mount parent directory to access shared package
+      - ..:/workspace:ro
       # Persistent ChromaDB storage
       - chroma_data:/app/vector_db
       # Mount your Obsidian vault 
@@ -41,6 +43,7 @@ services:
       - CHROMA_PERSIST_DIRECTORY=/app/vector_db
       - WATCH_DIRECTORY=/data/obsidian
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace:/app
     env_file:
       - .env
     depends_on:
@@ -57,6 +60,8 @@ services:
     container_name: brain_watcher
     volumes:
       - .:/app
+      # Mount parent directory to access shared package
+      - ..:/workspace:ro
       - chroma_data:/app/vector_db
       - C:/Users/camar/OneDrive/Documents/Obsidian Vault:/data/obsidian:ro
     environment:
@@ -64,6 +69,7 @@ services:
       - CHROMA_PERSIST_DIRECTORY=/app/vector_db
       - WATCH_DIRECTORY=/data/obsidian
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace:/app
     env_file:
       - .env
     depends_on:

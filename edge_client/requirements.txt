@@ -1,2 +1,24 @@
-# Edge Client Dependencies (Raspberry Pi)
-# Picovoice Porcupine, PyAudio, GPIO libraries
+# Edge Client Dependencies (Windows PC - Obsidian Integration)
+
+# API Communication
+requests>=2.31.0
+
+# Audio Processing
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy>=1.24.0
+
+# Speech Recognition
+faster-whisper>=0.10.0
+
+# Text-to-Speech (local, offline)
+pyttsx3>=2.90
+
+# Hotkey Detection
+keyboard>=0.13.5
+
+# Utilities
+python-dotenv>=1.0.0
+
+# Progress display
+rich>=13.0.0

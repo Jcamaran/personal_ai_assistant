@@ -5,7 +5,7 @@ import httpx
 import os 
 from .logger import setup_logger
 
-DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:3B")  # Default to llama3.2 3B if not specified in .env
+DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:3b")  # Default to llama3.2 3B if not specified in .env
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 logger = setup_logger(__name__)
