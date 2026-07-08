@@ -89,7 +89,8 @@ class BrainServerClient:
         self,
         query: str,
         top_k: int = 5,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        conversation_history: Optional[list] = None
     ) -> Optional[QueryResponse]:
         """
         Send a query to the brain server and get an AI-generated response.
@@ -98,7 +99,7 @@ class BrainServerClient:
             query (str): The question or query text
             top_k (int): Number of relevant documents to retrieve
             filter_metadata (dict, optional): Metadata filters for search
-        
+            conversation_history (list, optional): Conversation history for context-aware responses
         Returns:
             QueryResponse: Response with answer and sources, or None if failed
         """
@@ -107,10 +108,13 @@ class BrainServerClient:
             request_data = QueryRequest(
                 query=query,
                 top_k=top_k,
-                filter_metadata=filter_metadata
+                filter_metadata=filter_metadata,
+                conversation_history=conversation_history
             )
             
             print(f"🧠 Querying brain server: '{query[:50]}...'")
+            if conversation_history:
+                print(f"📜 Sending {len(conversation_history)} previous interactions for context")
             
             # Send POST request
             response = self.session.post(

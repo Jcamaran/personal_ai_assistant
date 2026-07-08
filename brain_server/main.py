@@ -46,7 +46,8 @@ async def query(request: QueryRequest):
     # Generate response from LLM (now async)
     answer = await generate_response(
         query = request.query,
-        context = rag_result['context']
+        context = rag_result['context'],
+        conversation_history = request.conversation_history
     )
 
     return QueryResponse(

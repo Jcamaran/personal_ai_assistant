@@ -8,7 +8,7 @@ import sys
 import keyboard
 from rich.console import Console
 from dotenv import load_dotenv
-
+from collections import deque
 # Add parent directory to path for shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -45,17 +45,19 @@ class VoiceAssistant:
         self.recognizer = None
         self.tts = None
         self.console = Console()
+        self.conversation_history = deque(maxlen=5)  # Store last 5 interactions
         
         self.is_running = False
     
     def _init_components(self):
-        """Initialize all components on first use (lazy loading)"""
+        """Initialize all components on first use (lazy loading) Lazy loading being only for the TTS and STT models, the API client is lightweight and can be initialized immediately."""
         if self.client is None:
             self.client = BrainServerClient(base_url=self.brain_url)
         
         if self.recognizer is None:
             model_size = os.getenv("WHISPER_MODEL", "base")
-            self.recognizer = SpeechRecognizer(model_size=model_size, device="auto")
+            device = os.getenv("WHISPER_DEVICE", "auto")
+            self.recognizer = SpeechRecognizer(model_size=model_size, device=device)
         
         if self.tts is None:
             self.tts = TextToSpeech(
@@ -74,10 +76,12 @@ class VoiceAssistant:
         try:
             self.console.print("\n[bold green]🎤 Listening...[/bold green]")
             
-            # Step 1: Record audio
+            # Step 1: Record audio (use unique filename to avoid caching issues)
+            import time
+            timestamp = int(time.time() * 1000)
             audio_file = record_audio(
                 duration=self.recording_duration,
-                output_file="temp_query.wav"
+                output_file=f"temp_query_{timestamp}.wav"
             )
             
             # Step 2: Transcribe to text
@@ -91,11 +95,18 @@ class VoiceAssistant:
             
             self.console.print(f"[cyan]📝 You asked: {query_text}[/cyan]")
             
+            # Show conversation history status
+            if self.conversation_history:
+                self.console.print(f"[dim]💬 Using {len(self.conversation_history)} previous interaction(s) for context[/dim]")
+            
             # Step 3: Send query to brain server
             self.console.print("[blue]🧠 Thinking...[/blue]")
-            response = self.client.query(query_text, top_k=5)
+            response = self.client.query(query_text, top_k=5, conversation_history=list(self.conversation_history))
             
             if response:
+                # Update conversation history
+                self.conversation_history.append({"query": query_text, "answer": response.answer})
+                
                 # Display answer
                 self.console.print(f"\n[bold green]💡 Answer:[/bold green]")
                 self.console.print(f"[white]{response.answer}[/white]\n")
@@ -122,6 +133,13 @@ class VoiceAssistant:
             if audio_file and os.path.exists(audio_file):
                 try:
                     os.remove(audio_file)
+                    # Also clean up any old temp files
+                    import glob
+                    for old_file in glob.glob("temp_query_*.wav"):
+                        try:
+                            os.remove(old_file)
+                        except:
+                            pass
                 except:
                     pass  # Ignore cleanup errors
     

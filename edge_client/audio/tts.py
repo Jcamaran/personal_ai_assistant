@@ -13,7 +13,7 @@ load_dotenv()
 class TextToSpeech:
     """
     Text-to-Speech engine using pyttsx3.
-    Lazy initializes the engine on first use.
+    Reinitializes engine for each speak call for maximum reliability.
     """
     
     def __init__(self, rate=150, volume=1.0, voice_index=1):
@@ -28,50 +28,54 @@ class TextToSpeech:
         self.rate = rate
         self.volume = volume
         self.voice_index = voice_index
-        self.engine = None  # Lazy init
+        print("✅ TTS configuration loaded")
     
-    def _init_engine(self):
-        """Initialize TTS engine on first use (lazy loading)"""
-        if self.engine is not None:
-            return  # Already initialized
-        
-        print("Initializing TTS engine...")
-        
+    def _create_engine(self):
+        """Create a fresh TTS engine instance."""
         try:
-            self.engine = pyttsx3.init()
-            self.engine.setProperty('rate', self.rate)
-            self.engine.setProperty('volume', self.volume)
+            engine = pyttsx3.init()
+            engine.setProperty('rate', self.rate)
+            engine.setProperty('volume', self.volume)
             
             # Set voice
-            voices = self.engine.getProperty('voices')
+            voices = engine.getProperty('voices')
             if voices and self.voice_index < len(voices):
-                self.engine.setProperty('voice', voices[self.voice_index].id)
+                engine.setProperty('voice', voices[self.voice_index].id)
             
-            print("✅ TTS engine initialized")
+            return engine
             
         except Exception as e:
-            print(f"❌ Failed to initialize TTS engine: {e}")
+            print(f"❌ Failed to create TTS engine: {e}")
             raise
     
     def speak(self, text):
         """
         Convert text to speech and play it.
+        Creates a fresh engine each time for reliability.
         
         Args:
             text (str): Text to speak
         """
-        self._init_engine()
-        
+        engine = None
         try:
             print(f"🗣️ Speaking: {text}")
-            self.engine.say(text)
-            self.engine.runAndWait()
+            
+            # Create fresh engine for each call (prevents stuck state)
+            engine = self._create_engine()
+            engine.say(text)
+            engine.runAndWait()
             
         except Exception as e:
             print(f"❌ TTS Error: {e}")
-            # Try to recover by reinitializing
-            self.engine = None
             raise
+        finally:
+            # Clean up engine
+            if engine is not None:
+                try:
+                    engine.stop()
+                    del engine
+                except:
+                    pass
     
     def save_to_file(self, text, output_file="speech.wav"):
         """
@@ -81,61 +85,52 @@ class TextToSpeech:
             text (str): Text to convert
             output_file (str): Path to save audio file
         """
-        self._init_engine()
-        
+        engine = None
         try:
             print(f"💾 Saving speech to {output_file}")
-            self.engine.save_to_file(text, output_file)
-            self.engine.runAndWait()
+            
+            engine = self._create_engine()
+            engine.save_to_file(text, output_file)
+            engine.runAndWait()
             
         except Exception as e:
             print(f"❌ Failed to save speech: {e}")
             raise
+        finally:
+            if engine is not None:
+                try:
+                    engine.stop()
+                    del engine
+                except:
+                    pass
     
     def set_voice(self, voice_index):
         """
-        Change the voice dynamically.
+        Change the voice for future speech.
         
         Args:
             voice_index (int): Index of the voice to use
         """
         self.voice_index = voice_index
-        
-        if self.engine is not None:
-            voices = self.engine.getProperty('voices')
-            if voices and voice_index < len(voices):
-                self.engine.setProperty('voice', voices[voice_index].id)
-                print(f"✅ Voice changed to index {voice_index}")
+        print(f"✅ Voice will be changed to index {voice_index} on next speak")
     
     def set_rate(self, rate):
         """
-        Change speech rate dynamically.
+        Change speech rate for future speech.
         
         Args:
             rate (int): New speech rate
         """
         self.rate = rate
-        if self.engine is not None:
-            self.engine.setProperty('rate', rate)
     
     def set_volume(self, volume):
         """
-        Change volume dynamically.
+        Change volume for future speech.
         
         Args:
             volume (float): New volume (0.0 to 1.0)
         """
         self.volume = volume
-        if self.engine is not None:
-            self.engine.setProperty('volume', volume)
-    
-    def __del__(self):
-        """Cleanup engine when object is destroyed"""
-        if self.engine is not None:
-            try:
-                self.engine.stop()
-            except:
-                pass
 
 
 # For backward compatibility with function-based approach

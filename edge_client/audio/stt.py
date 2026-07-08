@@ -83,15 +83,36 @@ class SpeechRecognizer:
         
         print(f"🎯 Transcribing audio...")
         
-        # Transcribe
-        segments, info = self.model.transcribe(audio_file_path, beam_size=beam_size)
-        
-        # Combine segments
-        transcription = " ".join([segment.text for segment in segments])
-        
-        print(f"📝 Language: {info.language} (confidence: {info.language_probability:.2f})")
-        
-        return transcription.strip()
+        try:
+            # Transcribe
+            segments, info = self.model.transcribe(audio_file_path, beam_size=beam_size)
+            
+            # Combine segments
+            transcription = " ".join([segment.text for segment in segments])
+            
+            print(f"📝 Language: {info.language} (confidence: {info.language_probability:.2f})")
+            
+            return transcription.strip()
+            
+        except Exception as e:
+            # If GPU transcription fails (e.g., missing CUDA libraries), fallback to CPU
+            if self.is_using_gpu and "cublas" in str(e).lower():
+                print(f"⚠️ GPU transcription failed ({e})")
+                print("🔄 Reloading model on CPU...")
+                
+                # Force reload on CPU
+                self.model = None
+                self.device = "cpu"
+                self._load_model()
+                
+                # Retry transcription on CPU
+                segments, info = self.model.transcribe(audio_file_path, beam_size=beam_size)
+                transcription = " ".join([segment.text for segment in segments])
+                print(f"📝 Language: {info.language} (confidence: {info.language_probability:.2f})")
+                return transcription.strip()
+            else:
+                # Different error, re-raise
+                raise
     
     def __del__(self):
         """Cleanup model when object is destroyed"""

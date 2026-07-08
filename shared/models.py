@@ -16,6 +16,7 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="The query string to search against the knowledge base")
     top_k: int = Field(5, description="Number of top results to return from similarity search")
     filter_metadata: Optional[dict] = Field(None, description="Optional metadata filters for similarity search")
+    conversation_history: Optional[List[dict]] = Field(None, description="Optional conversation history for context-aware responses")
 
 ########################## Response models ########################
 class IngestResponse(BaseModel):
