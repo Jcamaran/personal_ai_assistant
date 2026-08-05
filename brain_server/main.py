@@ -1,23 +1,21 @@
-# FastAPI entry point for the brain server.
-#
-# Endpoints:
-#   POST   /ingest     - chunk a file and add it to ChromaDB
-#   POST   /query      - similarity search + LLM answer
-#   GET    /documents  - list indexed documents
-#   DELETE /documents  - remove a document's chunks by file path
-#   GET    /stats      - collection statistics
-#   GET    /health     - service health check
+"""FastAPI entry point for the brain server."""
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI
-from core.rag_pipeline import (
+from brain_server.core.rag_pipeline import (
     ingest_document,
     query_documents,
     list_documents,
     delete_document_by_file_path,
     get_collection_stats,
 )
-from core.llm_handler import generate_response, check_ollama_health
-from core.embeddings import get_chromadb_client
+from brain_server.core.llm_handler import generate_response, check_ollama_health
+from brain_server.core.embeddings import get_chromadb_client
 from shared.models import (
     IngestRequest,
     IngestResponse,

@@ -4,9 +4,16 @@
 Creates a temporary markdown file, ingests it, runs a few queries against
 the collection, then cleans up.
 """
+from pathlib import Path
 import asyncio
 import os
-from core.rag_pipeline import ingest_document, query_documents
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from brain_server.core.rag_pipeline import ingest_document, query_documents
 
 TEST_FILE = "test_note.md"
 

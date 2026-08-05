@@ -35,6 +35,8 @@ class VoiceAssistant:
         self.recording_duration = int(os.getenv("MAX_RECORDING_DURATION", 5))
         # 'fixed' records for a set duration; 'auto' records until silence
         self.recording_mode = os.getenv("RECORDING_MODE", "fixed").lower()
+        default_activation = "manual" if sys.platform == "darwin" else "hotkey"
+        self.activation_method = os.getenv("ACTIVATION_METHOD", default_activation).lower()
 
         # Heavy components are created lazily on first use
         self.client = None
@@ -152,7 +154,10 @@ class VoiceAssistant:
     def run(self):
         """Start the main loop and wait for hotkey activation."""
         self.console.print("[bold blue]Obsidian Voice Assistant started[/bold blue]")
-        self.console.print(f"[yellow]Press {self.hotkey} to activate voice input[/yellow]")
+        if self.activation_method == "manual":
+            self.console.print("[yellow]Press Enter to activate voice input[/yellow]")
+        else:
+            self.console.print(f"[yellow]Press {self.hotkey} to activate voice input[/yellow]")
         self.console.print("[yellow]Press Ctrl+C to exit[/yellow]\n")
 
         self.console.print("[dim]Checking brain server connection...[/dim]")
@@ -166,6 +171,10 @@ class VoiceAssistant:
         self.console.print("[green]Brain server is healthy[/green]\n")
         self.console.print("[dim]Waiting for activation...[/dim]")
 
+        if self.activation_method == "manual":
+            self._run_manual_loop()
+            return
+
         try:
             keyboard.add_hotkey(self.hotkey, self.process_voice_query)
             self.is_running = True
@@ -176,6 +185,18 @@ class VoiceAssistant:
 
         try:
             keyboard.wait()
+        except KeyboardInterrupt:
+            self.console.print("\n[yellow]Shutting down...[/yellow]")
+        finally:
+            self.shutdown()
+
+    def _run_manual_loop(self):
+        """Wait for Enter before each voice interaction."""
+        self.is_running = True
+        try:
+            while True:
+                input("\nPress Enter to speak (Ctrl+C to exit): ")
+                self.process_voice_query()
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Shutting down...[/yellow]")
         finally:

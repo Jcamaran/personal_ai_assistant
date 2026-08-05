@@ -19,6 +19,7 @@ keyboard>=0.13.5
 
 # Utilities
 python-dotenv>=1.0.0
+pydantic>=2.6.0
 
 # Progress display
 rich>=13.0.0

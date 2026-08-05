@@ -3,17 +3,19 @@
 Recursively scans the vault and ingests every .md file, processing files in
 small concurrent batches.
 """
+from pathlib import Path
 import asyncio
 import os
-from pathlib import Path
 from typing import List
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from core.rag_pipeline import ingest_document
-from core.logger import setup_logger
-from core import config
+from brain_server.core.rag_pipeline import ingest_document
+from brain_server.core.logger import setup_logger
+from brain_server.core import config
 
 logger = setup_logger(__name__)
 
