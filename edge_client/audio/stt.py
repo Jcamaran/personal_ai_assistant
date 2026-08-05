@@ -1,4 +1,4 @@
-"""Speech-to-Text using faster-whisper with lazy loading"""
+"""Speech-to-text using faster-whisper, with lazy model loading."""
 import os
 from faster_whisper import WhisperModel
 from dotenv import load_dotenv
@@ -7,125 +7,82 @@ load_dotenv()
 
 
 class SpeechRecognizer:
+    """Whisper-based speech recognition.
+
+    The model is loaded on first use so importing this module stays cheap.
     """
-    Speech-to-Text using Whisper model.
-    Lazy loads the model on first use to avoid loading at import time.
-    """
-    
+
     def __init__(self, model_size="base", device="auto"):
         """
-        Initialize SpeechRecognizer.
-        
         Args:
-            model_size (str): Whisper model size (tiny, base, small, medium, large)
-            device (str): Device to use ('auto', 'cuda', 'cpu')
+            model_size: Whisper model size (tiny, base, small, medium, large)
+            device: 'auto', 'cuda', or 'cpu'
         """
         self.model_size = model_size
         self.device = device
-        self.model = None  # Lazy load
+        self.model = None
         self.is_using_gpu = False
-    
+
     def _load_model(self):
-        """Load Whisper model on first use (lazy loading)"""
+        """Load the Whisper model, preferring GPU when device is 'auto'."""
         if self.model is not None:
-            return  # Already loaded
-        
+            return
+
         print(f"Loading Whisper model: {self.model_size}...")
-        
+
         try:
             if self.device == "auto":
-                # Try GPU first, fallback to CPU
                 try:
-                    self.model = WhisperModel(
-                        self.model_size,
-                        device="cuda",
-                        compute_type="float16"
-                    )
+                    self.model = WhisperModel(self.model_size, device="cuda", compute_type="float16")
                     self.is_using_gpu = True
-                    print("✅ Whisper loaded on GPU")
+                    print("Whisper loaded on GPU")
                 except Exception as e:
-                    print(f"GPU not available ({e}), falling back to CPU...")
-                    self.model = WhisperModel(
-                        self.model_size,
-                        device="cpu",
-                        compute_type="int8"
-                    )
+                    print(f"GPU not available ({e}), falling back to CPU")
+                    self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
                     self.is_using_gpu = False
-                    print("✅ Whisper loaded on CPU")
+                    print("Whisper loaded on CPU")
             else:
-                # Use specified device
                 compute_type = "float16" if self.device == "cuda" else "int8"
-                self.model = WhisperModel(
-                    self.model_size,
-                    device=self.device,
-                    compute_type=compute_type
-                )
+                self.model = WhisperModel(self.model_size, device=self.device, compute_type=compute_type)
                 self.is_using_gpu = (self.device == "cuda")
-                print(f"✅ Whisper loaded on {self.device}")
-                
+                print(f"Whisper loaded on {self.device}")
+
         except Exception as e:
-            print(f"❌ Failed to load Whisper model: {e}")
+            print(f"Failed to load Whisper model: {e}")
             raise
-    
+
     def transcribe(self, audio_file_path, beam_size=3):
+        """Transcribe an audio file to text.
+
+        Falls back to CPU if GPU transcription fails due to missing CUDA
+        libraries.
         """
-        Transcribe audio file to text.
-        
-        Args:
-            audio_file_path (str): Path to audio file
-            beam_size (int): Beam size for decoding (higher = more accurate but slower)
-        
-        Returns:
-            str: Transcribed text
-        """
-        # Load model if not already loaded
         self._load_model()
-        
-        print(f"🎯 Transcribing audio...")
-        
+
         try:
-            # Transcribe
-            segments, info = self.model.transcribe(audio_file_path, beam_size=beam_size)
-            
-            # Combine segments
-            transcription = " ".join([segment.text for segment in segments])
-            
-            print(f"📝 Language: {info.language} (confidence: {info.language_probability:.2f})")
-            
-            return transcription.strip()
-            
+            return self._run_transcription(audio_file_path, beam_size)
         except Exception as e:
-            # If GPU transcription fails (e.g., missing CUDA libraries), fallback to CPU
             if self.is_using_gpu and "cublas" in str(e).lower():
-                print(f"⚠️ GPU transcription failed ({e})")
-                print("🔄 Reloading model on CPU...")
-                
-                # Force reload on CPU
+                print(f"GPU transcription failed ({e}), reloading model on CPU")
                 self.model = None
                 self.device = "cpu"
                 self._load_model()
-                
-                # Retry transcription on CPU
-                segments, info = self.model.transcribe(audio_file_path, beam_size=beam_size)
-                transcription = " ".join([segment.text for segment in segments])
-                print(f"📝 Language: {info.language} (confidence: {info.language_probability:.2f})")
-                return transcription.strip()
-            else:
-                # Different error, re-raise
-                raise
-    
+                return self._run_transcription(audio_file_path, beam_size)
+            raise
+
+    def _run_transcription(self, audio_file_path, beam_size):
+        segments, info = self.model.transcribe(audio_file_path, beam_size=beam_size)
+        transcription = " ".join(segment.text for segment in segments)
+        print(f"Detected language: {info.language} (confidence: {info.language_probability:.2f})")
+        return transcription.strip()
+
     def __del__(self):
-        """Cleanup model when object is destroyed"""
         if self.model is not None:
             del self.model
 
 
-# For backward compatibility with function-based approach
 def transcribe_audio(audio_file_path):
-    """
-    Convenience function for transcribing audio.
-    Creates a new SpeechRecognizer instance each time.
-    """
+    """Convenience function that creates a recognizer and transcribes a file."""
     model_size = os.getenv("WHISPER_MODEL", "base")
     recognizer = SpeechRecognizer(model_size=model_size, device="auto")
     return recognizer.transcribe(audio_file_path)

@@ -1,16 +1,19 @@
-﻿# Shared data models package
-# This package is used by both brain_server and edge_client
-
+# Shared data models used by both brain_server and edge_client.
 from .models import (
     IngestRequest,
     IngestResponse,
     QueryRequest,
     QueryResponse,
     SourceDocument,
-    HealthCheckResponse
+    HealthCheckResponse,
+    DeleteDocumentRequest,
+    DeleteDocumentResponse,
+    DocumentInfo,
+    DocumentListResponse,
+    StatsResponse,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "IngestRequest",
@@ -19,4 +22,9 @@ __all__ = [
     "QueryResponse",
     "SourceDocument",
     "HealthCheckResponse",
+    "DeleteDocumentRequest",
+    "DeleteDocumentResponse",
+    "DocumentInfo",
+    "DocumentListResponse",
+    "StatsResponse",
 ]
