@@ -7,10 +7,12 @@ from .logger import setup_logger
 import asyncio
 import uuid
 import os
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set, Tuple
 
 # Initialize logger
 logger = setup_logger(__name__)
+
+NO_NOTES_CONTEXT = "No relevant information found in your notes."
 
 
 async def delete_document_by_file_path(file_path: str) -> Dict[str, Any]:
@@ -285,7 +287,7 @@ def _format_context(results: Dict[str, Any]) -> str:
         str: Formatted context string
     """
     if not results['documents'] or len(results['documents'][0]) == 0:
-        return "No relevant information found in your notes."
+        return NO_NOTES_CONTEXT
     
     # Combine chunks with source labels
     context_parts = []
@@ -294,6 +296,110 @@ def _format_context(results: Dict[str, Any]) -> str:
         context_parts.append(f"[From {file_name}]\n{doc}")
     
     return "\n\n".join(context_parts)
+
+
+def format_sources_as_context(sources: List[Dict[str, Any]]) -> str:
+    """Format a list of source dicts into the LLM context string."""
+    if not sources:
+        return NO_NOTES_CONTEXT
+
+    context_parts = []
+    for source in sources:
+        file_name = (source.get("metadata") or {}).get("file_name", "unknown")
+        snippet = source.get("content_snippet") or ""
+        context_parts.append(f"[From {file_name}]\n{snippet}")
+    return "\n\n".join(context_parts)
+
+
+def _source_key(source: Dict[str, Any]) -> Tuple[str, Any]:
+    """Identity for a chunk: file path plus chunk index when available."""
+    metadata = source.get("metadata") or {}
+    file_path = metadata.get("file_path") or metadata.get("file_name") or source.get("document_id")
+    return (file_path, metadata.get("chunk_index"))
+
+
+async def get_neighbor_chunks(
+    sources: List[Dict[str, Any]],
+    max_neighbors: int = 4,
+) -> List[Dict[str, Any]]:
+    """
+    Pull adjacent chunks (chunk_index ± 1) from the same note as each source.
+
+    Deduplicates against the provided sources and caps how many extras are added
+    so the LLM context stays bounded.
+    """
+    if not sources:
+        return []
+
+    existing_keys: Set[Tuple[str, Any]] = {_source_key(s) for s in sources}
+    neighbors: List[Dict[str, Any]] = []
+    seen_neighbor_keys: Set[Tuple[str, Any]] = set()
+
+    files_to_fetch: Dict[str, List[int]] = {}
+    for source in sources:
+        metadata = source.get("metadata") or {}
+        file_path = metadata.get("file_path")
+        chunk_index = metadata.get("chunk_index")
+        if not file_path or chunk_index is None:
+            continue
+        files_to_fetch.setdefault(file_path, []).append(int(chunk_index))
+
+    collection = get_or_create_collection()
+
+    for file_path, indexes in files_to_fetch.items():
+        wanted = set()
+        for idx in indexes:
+            wanted.add(idx - 1)
+            wanted.add(idx + 1)
+        wanted = {i for i in wanted if i >= 0}
+        if not wanted:
+            continue
+
+        try:
+            existing = await asyncio.to_thread(
+                collection.get,
+                where={"file_path": file_path},
+                include=["documents", "metadatas"],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch neighbor chunks for {file_path}: {e}")
+            continue
+
+        ids = existing.get("ids") or []
+        documents = existing.get("documents") or []
+        metadatas = existing.get("metadatas") or []
+
+        for i, meta in enumerate(metadatas):
+            if not meta:
+                continue
+            try:
+                idx = int(meta.get("chunk_index"))
+            except (TypeError, ValueError):
+                continue
+            if idx not in wanted:
+                continue
+            neighbor = {
+                "document_id": (
+                    ids[i].rsplit("_chunk_", 1)[0]
+                    if i < len(ids) and "_chunk_" in ids[i]
+                    else (ids[i] if i < len(ids) else "unknown")
+                ),
+                "content_snippet": documents[i] if i < len(documents) else "",
+                "similarity_score": 0.0,
+                "metadata": meta,
+            }
+            key = _source_key(neighbor)
+            if key in existing_keys or key in seen_neighbor_keys:
+                continue
+            seen_neighbor_keys.add(key)
+            neighbors.append(neighbor)
+            if len(neighbors) >= max_neighbors:
+                logger.info(f"Neighbor expansion added {len(neighbors)} chunks (capped)")
+                return neighbors
+
+    if neighbors:
+        logger.info(f"Neighbor expansion added {len(neighbors)} chunks")
+    return neighbors
 
 
 

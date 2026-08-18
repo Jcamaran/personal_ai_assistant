@@ -5,9 +5,11 @@
 
 from fastapi import FastAPI
 from core.rag_pipeline import ingest_document, query_documents
+from core.rag_agent import run_rag_agent
 from core.llm_handler import generate_response, check_ollama_health
 from core.embeddings import get_chromadb_client
-from shared.models import IngestRequest, IngestResponse, QueryRequest, QueryResponse, HealthCheckResponse
+from shared.models import IngestRequest, IngestResponse, QueryRequest, QueryResponse, HealthCheckResponse, AgentTrace
+import os
 import time
 from datetime import datetime
 
@@ -15,7 +17,14 @@ from datetime import datetime
 app = FastAPI(title="Brain Server API", version="1.0.0")
 
 # Track server start time for uptime calculation
-START_TIME = datetime.now() 
+START_TIME = datetime.now()
+
+def _env_flag(name: str, default: str = "true") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+AGENTIC_RAG = _env_flag("AGENTIC_RAG", "true")
+
 
 @app.get("/")
 async def root():
@@ -36,14 +45,28 @@ async def query(request: QueryRequest):
     """Query documents with RAG + LLM"""
     start = time.time()
 
-    # Get relevant documents (now async)
+    if AGENTIC_RAG:
+        result = await run_rag_agent(
+            query=request.query,
+            conversation_history=request.conversation_history,
+            top_k=request.top_k,
+            filter_metadata=request.filter_metadata,
+        )
+        return QueryResponse(
+            query=request.query,
+            answer=result["answer"],
+            sources=result["sources"],
+            processing_time=time.time() - start,
+            agent_trace=AgentTrace(**result["agent_trace"]),
+        )
+
+    # One-shot path for A/B timing when AGENTIC_RAG=false
     rag_result = await query_documents(
         query = request.query,
         top_k = request.top_k,
         filter_metadata = request.filter_metadata
     )
     
-    # Generate response from LLM (now async)
     answer = await generate_response(
         query = request.query,
         context = rag_result['context'],

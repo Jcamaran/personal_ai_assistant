@@ -32,7 +32,7 @@ class BrainServerClient:
     def __init__(
         self,
         base_url: Optional[str] = None,
-        timeout: int = 60
+        timeout: int = 120
     ):
         """
         Initialize the Brain Server client.
@@ -129,6 +129,13 @@ class BrainServerClient:
             query_response = QueryResponse(**data)
             
             print(f"✅ Received answer ({len(query_response.sources)} sources)")
+            if query_response.agent_trace:
+                trace = query_response.agent_trace
+                print(
+                    f"   Agent: rewritten='{(trace.rewritten_query or '')[:60]}' "
+                    f"kept={trace.chunks_kept}/{trace.chunks_retrieved} "
+                    f"rounds={trace.iterations}"
+                )
             
             return query_response
             

@@ -111,6 +111,19 @@ class VoiceAssistant:
                 self.console.print(f"\n[bold green]💡 Answer:[/bold green]")
                 self.console.print(f"[white]{response.answer}[/white]\n")
                 self.console.print(f"[dim]📚 Sources: {len(response.sources)} documents[/dim]")
+                if response.agent_trace:
+                    trace = response.agent_trace
+                    rewritten = trace.rewritten_query or ""
+                    if rewritten and rewritten.strip() != query_text.strip():
+                        self.console.print(f"[dim]🔎 Rewritten search: {rewritten}[/dim]")
+                    self.console.print(
+                        f"[dim]🧪 Agent: kept {trace.chunks_kept}/{trace.chunks_retrieved} chunks "
+                        f"in {trace.iterations} round(s)"
+                        f"{' (fallback)' if trace.used_fallback else ''}[/dim]"
+                    )
+                    if trace.dropped_file_names:
+                        dropped = ", ".join(trace.dropped_file_names)
+                        self.console.print(f"[dim]🚫 Dropped notes: {dropped}[/dim]")
                 self.console.print(f"[dim]⏱️  Processing time: {response.processing_time:.2f}s[/dim]\n")
                 
                 # Step 4: Speak the answer
