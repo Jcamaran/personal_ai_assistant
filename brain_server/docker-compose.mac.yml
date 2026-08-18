@@ -1,0 +1,77 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: brain_ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - brain_network
+    restart: unless-stopped
+
+  brain_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brain_server
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ..:/workspace:ro
+      - chroma_data:/app/vector_db
+      - "/Applications/Joaquins Vault:/data/obsidian:ro"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - CHROMA_PERSIST_DIRECTORY=/app/vector_db
+      - WATCH_DIRECTORY=/data/obsidian
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace
+    env_file:
+      - .env
+    depends_on:
+      - ollama
+    networks:
+      - brain_network
+    restart: unless-stopped
+    working_dir: /workspace
+    command: ["uvicorn", "brain_server.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brain_watcher
+    volumes:
+      - .:/app
+      - ..:/workspace:ro
+      - chroma_data:/app/vector_db
+      - "/Applications/Joaquins Vault:/data/obsidian:ro"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - CHROMA_PERSIST_DIRECTORY=/app/vector_db
+      - WATCH_DIRECTORY=/data/obsidian
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace
+    env_file:
+      - .env
+    depends_on:
+      - brain_server
+    networks:
+      - brain_network
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    working_dir: /workspace
+    command: ["python", "-m", "brain_server.data_sync.watcher"]
+
+volumes:
+  ollama_data:
+    driver: local
+  chroma_data:
+    driver: local
+
+networks:
+  brain_network:
+    driver: bridge

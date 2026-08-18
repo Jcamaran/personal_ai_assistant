@@ -1,154 +1,103 @@
-# LangChain RAG pipeline logic
-# Handles document loading, chunking, and retrieval
+# RAG pipeline: document loading, chunking, retrieval, and collection management.
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from .embeddings import get_or_create_collection
 from .logger import setup_logger
+from . import config
 import asyncio
 import uuid
 import os
 from typing import Dict, List, Optional, Any, Set, Tuple
 
-# Initialize logger
 logger = setup_logger(__name__)
 
 NO_NOTES_CONTEXT = "No relevant information found in your notes."
 
 
+def _failure(message: str, file_path: str, deleted_count: int) -> Dict[str, Any]:
+    """Build a standard failure result for ingest_document."""
+    return {
+        "success": False,
+        "message": message,
+        "file_path": file_path,
+        "chunks_added": 0,
+        "chunks_deleted": deleted_count,
+        "document_id": None,
+        "is_update": False,
+    }
+
+
 async def delete_document_by_file_path(file_path: str) -> Dict[str, Any]:
-    """
-    Delete all chunks associated with a specific file path from ChromaDB.
-    This ensures idempotent ingestion - when a file is modified, old chunks are removed.
-    
-    Args:
-        file_path (str): Path to the file whose chunks should be deleted
-    
-    Returns:
-        dict: Deletion results with success status and count of deleted chunks
-    """
+    """Delete all chunks for a file. Makes re-ingestion idempotent."""
     try:
         collection = get_or_create_collection()
-        
-        # Query for all chunks with this file_path
-        existing = await asyncio.to_thread(
-            collection.get,
-            where={"file_path": file_path}
-        )
-        
-        if existing and existing['ids']:
-            # Delete all matching chunks
-            await asyncio.to_thread(
-                collection.delete,
-                ids=existing['ids']
-            )
-            logger.info(f"Deleted {len(existing['ids'])} existing chunks for: {file_path}")
-            return {
-                "success": True,
-                "deleted_chunks": len(existing['ids']),
-                "message": f"Deleted {len(existing['ids'])} old chunks"
-            }
-        else:
-            logger.debug(f"No existing chunks found for: {file_path}")
-            return {
-                "success": True,
-                "deleted_chunks": 0,
-                "message": "No existing chunks to delete"
-            }
-    
+        existing = await asyncio.to_thread(collection.get, where={"file_path": file_path})
+
+        if not existing or not existing["ids"]:
+            return {"success": True, "deleted_chunks": 0, "message": "No existing chunks to delete"}
+
+        await asyncio.to_thread(collection.delete, ids=existing["ids"])
+        count = len(existing["ids"])
+        logger.info(f"Deleted {count} existing chunks for: {file_path}")
+        return {"success": True, "deleted_chunks": count, "message": f"Deleted {count} old chunks"}
+
     except Exception as e:
         logger.error(f"Error deleting chunks for {file_path}: {e}")
-        return {
-            "success": False,
-            "deleted_chunks": 0,
-            "message": f"Error during deletion: {str(e)}"
-        }
+        return {"success": False, "deleted_chunks": 0, "message": f"Error during deletion: {e}"}
 
 
 async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Load a document, split it into chunks, and store it in ChromaDB.
+
+    Existing chunks for the same file are removed first, so re-ingesting a
+    modified file replaces its old content.
     """
-    Load a document, split into chunks, and add to ChromaDB.
-    
-    Args:
-        file_path (str): Path to the document file
-        metadata (dict, optional): Additional metadata to store
-    
-    Returns:
-        dict: Ingestion results with success status, document_id, chunks_created
-    """
-    # Delete old chunks for this file before ingesting (ensures updates work correctly)
     deletion_result = await delete_document_by_file_path(file_path)
-    deleted_count = deletion_result.get('deleted_chunks', 0)
-    
-    # Generate unique document ID
+    deleted_count = deletion_result.get("deleted_chunks", 0)
     document_id = str(uuid.uuid4())
-    
-    logger.info(f"Starting ingestion for: {file_path}")
-    
-    # Load document (run blocking I/O in thread pool)
+
+    logger.info(f"Ingesting: {file_path}")
+
     try:
-        loader = TextLoader(file_path, encoding='utf-8')
+        loader = TextLoader(file_path, encoding="utf-8")
         documents = await asyncio.to_thread(loader.load)
-        logger.debug(f"Loaded {len(documents)} document(s) from {file_path}")
     except Exception as e:
-        logger.error(f"Failed to load document from {file_path}: {e}")
-        return {
-            "success": False,
-            "message": f"Failed to load document: {str(e)}",
-            "file_path": file_path,
-            "chunks_added": 0,
-            "chunks_deleted": deleted_count,
-            "document_id": None,
-            "is_update": False
-        }
-    
-    # Split into chunks
+        logger.error(f"Failed to load document {file_path}: {e}")
+        return _failure(f"Failed to load document: {e}", file_path, deleted_count)
+
     try:
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50,
+            chunk_size=config.CHUNK_SIZE,
+            chunk_overlap=config.CHUNK_OVERLAP,
             length_function=len,
-            separators=["\n\n", "\n", " ", ""]
+            separators=["\n\n", "\n", " ", ""],
         )
         chunks = text_splitter.split_documents(documents)
-        logger.info(f"Split document into {len(chunks)} chunks")
     except Exception as e:
         logger.error(f"Failed to split document {file_path}: {e}")
-        return {
-            "success": False,
-            "message": f"Failed to split document: {str(e)}",
-            "file_path": file_path,
-            "chunks_added": 0,
-            "chunks_deleted": deleted_count,
-            "document_id": None,
-            "is_update": False
-        }
-    
-    # add doc to ChromaDB (run blocking operation in thread pool)
+        return _failure(f"Failed to split document: {e}", file_path, deleted_count)
+
     try:
         collection = get_or_create_collection()
-        
-        # Prepare data for ChromaDB
-        chunk_ids = [_generate_chunk_id(document_id, i) for i in range(len(chunks))]
+        chunk_ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
         chunk_texts = [chunk.page_content for chunk in chunks]
         chunk_metadatas = [
-            _extract_metadata(file_path, i, len(chunks), metadata) 
+            _build_chunk_metadata(file_path, i, len(chunks), metadata)
             for i in range(len(chunks))
         ]
-        
-        # Add to collection (blocking operation)
+
         await asyncio.to_thread(
             collection.add,
             documents=chunk_texts,
             ids=chunk_ids,
-            metadatas=chunk_metadatas
+            metadatas=chunk_metadatas,
         )
-        
-        logger.info(f"Successfully ingested {len(chunks)} chunks with document_id: {document_id}")
-        
-        # Log if this was an update (had deleted chunks) vs new file
+
         if deleted_count > 0:
-            logger.info(f"Updated file: replaced {deleted_count} old chunks with {len(chunks)} new chunks")
-        
+            logger.info(f"Updated {file_path}: {deleted_count} old chunks replaced by {len(chunks)}")
+        else:
+            logger.info(f"Ingested {file_path}: {len(chunks)} chunks (id: {document_id})")
+
         return {
             "success": True,
             "message": f"Successfully ingested {len(chunks)} chunks",
@@ -156,145 +105,122 @@ async def ingest_document(file_path: str, metadata: Optional[Dict[str, Any]] = N
             "chunks_added": len(chunks),
             "chunks_deleted": deleted_count,
             "document_id": document_id,
-            "is_update": deleted_count > 0
+            "is_update": deleted_count > 0,
         }
-        
+
     except Exception as e:
         logger.error(f"Failed to add document to ChromaDB: {e}")
-        return {
-            "success": False,
-            "message": f"Failed to add to database: {str(e)}",
-            "file_path": file_path,
-            "chunks_added": 0,
-            "chunks_deleted": deleted_count,
-            "document_id": None,
-            "is_update": False
-        }
+        return _failure(f"Failed to add to database: {e}", file_path, deleted_count)
 
 
 async def query_documents(query: str, top_k: int = 5, filter_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Search ChromaDB for chunks relevant to a query.
+
+    Returns a dict with "context" (combined text for the LLM) and "sources"
+    (per-chunk metadata for the API response).
     """
-    Search ChromaDB for relevant document chunks.
-    
-    Args:
-        query (str): The search query
-        top_k (int): Number of results to return
-        filter_metadata (dict, optional): Metadata filters
-    
-    Returns:
-        dict: {
-            "context": str,  # Combined text for LLM
-            "sources": list  # List of source documents with metadata
-        }
-    """
-    logger.info(f"Querying documents with: '{query[:50]}...' (top_k={top_k})")
-    
+    logger.info(f"Query: '{query[:50]}' (top_k={top_k})")
+
     try:
         collection = get_or_create_collection()
-        
-        # Query ChromaDB (blocking operation)
         results = await asyncio.to_thread(
             collection.query,
             query_texts=[query],
             n_results=top_k,
-            where=filter_metadata
+            where=filter_metadata,
         )
-        
-        logger.debug(f"Retrieved {len(results['documents'][0])} results")
-        
-        # Format context for LLM
-        context = _format_context(results)
-        
-        # Format sources for response
+
         sources = []
-        if results['documents'] and len(results['documents'][0]) > 0:
-            for i in range(len(results['documents'][0])):
-                # Extract document_id from chunk_id (format: {document_id}_chunk_{index})
-                chunk_id = results['ids'][0][i] if results.get('ids') else 'unknown'
-                document_id = chunk_id.rsplit('_chunk_', 1)[0] if '_chunk_' in chunk_id else chunk_id
-                
+        if results["documents"] and results["documents"][0]:
+            for i in range(len(results["documents"][0])):
+                # Chunk IDs have the form {document_id}_chunk_{index}
+                chunk_id = results["ids"][0][i] if results.get("ids") else "unknown"
+                document_id = chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else chunk_id
+
                 sources.append({
                     "document_id": document_id,
-                    "content_snippet": results['documents'][0][i],
-                    "similarity_score": float(1 - results['distances'][0][i]) if results.get('distances') else 0.0,
-                    "metadata": results['metadatas'][0][i]
+                    "content_snippet": results["documents"][0][i],
+                    "similarity_score": float(1 - results["distances"][0][i]) if results.get("distances") else 0.0,
+                    "metadata": results["metadatas"][0][i],
                 })
-        
-        logger.info(f"Query successful, returning {len(sources)} sources")
-        
-        return {
-            "context": context,
-            "sources": sources
-        }
-        
+
+        return {"context": _format_context(results), "sources": sources}
+
     except Exception as e:
         logger.error(f"Failed to query documents: {e}")
+        return {"context": "", "sources": []}
+
+
+async def list_documents() -> Dict[str, Any]:
+    """List all indexed documents, grouped by file path with chunk counts."""
+    try:
+        collection = get_or_create_collection()
+        records = await asyncio.to_thread(collection.get, include=["metadatas"])
+
+        counts: Dict[str, int] = {}
+        for metadata in records.get("metadatas") or []:
+            file_path = (metadata or {}).get("file_path", "unknown")
+            counts[file_path] = counts.get(file_path, 0) + 1
+
+        documents = [
+            {
+                "file_path": path,
+                "file_name": os.path.basename(path),
+                "chunk_count": count,
+            }
+            for path, count in sorted(counts.items())
+        ]
+        return {"documents": documents, "total": len(documents)}
+
+    except Exception as e:
+        logger.error(f"Failed to list documents: {e}")
+        return {"documents": [], "total": 0}
+
+
+async def get_collection_stats() -> Dict[str, Any]:
+    """Return chunk and document counts for the active collection."""
+    try:
+        collection = get_or_create_collection()
+        total_chunks = await asyncio.to_thread(collection.count)
+        doc_list = await list_documents()
+
         return {
-            "context": "",
-            "sources": []
+            "collection_name": collection.name,
+            "total_chunks": total_chunks,
+            "total_documents": doc_list["total"],
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get collection stats: {e}")
+        return {
+            "collection_name": config.COLLECTION_NAME,
+            "total_chunks": 0,
+            "total_documents": 0,
         }
 
 
-def _generate_chunk_id(document_id: str, chunk_index: int) -> str:
-    """
-    Generate a unique ID for a document chunk.
-    
-    Args:
-        document_id (str): Unique document identifier
-        chunk_index (int): Index of the chunk
-    
-    Returns:
-        str: Unique chunk ID
-    """
-    return f"{document_id}_chunk_{chunk_index}"
-
-
-def _extract_metadata(file_path: str, chunk_index: int, total_chunks: int, additional_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    Build metadata for a document chunk.
-    
-    Args:
-        file_path (str): Path to the document
-        chunk_index (int): Index of this chunk
-        total_chunks (int): Total number of chunks
-        additional_metadata (dict, optional): Additional metadata to include
-    
-    Returns:
-        dict: Complete metadata for the chunk
-    """
+def _build_chunk_metadata(file_path: str, chunk_index: int, total_chunks: int, additional_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Build the metadata dict stored alongside each chunk."""
     metadata = {
         "file_path": file_path,
         "file_name": os.path.basename(file_path),
         "chunk_index": chunk_index,
-        "total_chunks": total_chunks
+        "total_chunks": total_chunks,
     }
-    
-    # Merge additional metadata if provided
     if additional_metadata:
         metadata.update(additional_metadata)
-    
     return metadata
 
 
 def _format_context(results: Dict[str, Any]) -> str:
-    """
-    Format ChromaDB query results into a context string for LLM.
-    
-    Args:
-        results (dict): ChromaDB query results
-    
-    Returns:
-        str: Formatted context string
-    """
-    if not results['documents'] or len(results['documents'][0]) == 0:
+    """Combine query results into a single context string for the LLM."""
+    if not results["documents"] or not results["documents"][0]:
         return NO_NOTES_CONTEXT
-    
-    # Combine chunks with source labels
     context_parts = []
-    for i, doc in enumerate(results['documents'][0]):
-        file_name = results['metadatas'][0][i].get('file_name', 'unknown')
+    for i, doc in enumerate(results["documents"][0]):
+        file_name = results["metadatas"][0][i].get("file_name", "unknown")
         context_parts.append(f"[From {file_name}]\n{doc}")
-    
+
     return "\n\n".join(context_parts)
 
 
@@ -400,8 +326,3 @@ async def get_neighbor_chunks(
     if neighbors:
         logger.info(f"Neighbor expansion added {len(neighbors)} chunks")
     return neighbors
-
-
-
-
-

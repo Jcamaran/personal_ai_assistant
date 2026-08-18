@@ -1,60 +1,46 @@
-# Ollama API integration
-# Handles LLM calls to local Llama 3 model
+# Ollama API integration for local LLM inference.
 import json
-import os
 import re
 from typing import Any, Dict, List, Optional
 
 import httpx
 
+from . import config
 from .logger import setup_logger
 
-DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:3b")  # Default to llama3.2 3B if not specified in .env
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+logger = setup_logger(__name__)
+
 NO_NOTES_CONTEXT = "No relevant information found in your notes."
 
-logger = setup_logger(__name__)
+SYSTEM_PROMPT = (
+    "You are a helpful assistant that answers from the user's personal notes. "
+    "Cite note filenames. Never invent details that are not in the provided context."
+)
 
 
 async def ollama_chat(
     messages: List[Dict[str, str]],
     *,
     json_mode: bool = False,
-    temperature: float = 0.2,
-    num_predict: int = 500,
-    timeout: float = 60.0,
+    temperature: Optional[float] = None,
+    num_predict: Optional[int] = None,
+    timeout: Optional[float] = None,
 ) -> str:
-    """
-    Send a chat completion request to Ollama and return the message content.
-
-    Args:
-        messages: Chat messages in Ollama format.
-        json_mode: If True, request JSON-only output via Ollama format=json.
-        temperature: Sampling temperature.
-        num_predict: Max tokens to generate.
-        timeout: HTTP timeout in seconds.
-
-    Returns:
-        str: Assistant message content.
-
-    Raises:
-        httpx.HTTPError: On transport or HTTP status errors.
-        KeyError: If the response is missing the expected message field.
-    """
+    """Send a chat completion request to Ollama and return the message content."""
     payload: Dict[str, Any] = {
-        "model": DEFAULT_LLM_MODEL,
+        "model": config.LLM_MODEL,
         "messages": messages,
         "stream": False,
         "options": {
-            "temperature": temperature,
-            "num_predict": num_predict,
+            "temperature": config.LLM_TEMPERATURE if temperature is None else temperature,
+            "num_predict": config.LLM_MAX_TOKENS if num_predict is None else num_predict,
         },
     }
     if json_mode:
         payload["format"] = "json"
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(f"{OLLAMA_HOST}/api/chat", json=payload)
+    async with httpx.AsyncClient(timeout=timeout or config.LLM_TIMEOUT_SECONDS) as client:
+        response = await client.post(f"{config.OLLAMA_HOST}/api/chat", json=payload)
         response.raise_for_status()
         data = response.json()
         return data["message"]["content"]
@@ -65,11 +51,11 @@ def _format_history(conversation_history: Optional[List]) -> str:
     if not conversation_history:
         return ""
 
-    history_text = "\n\nPrevious conversation (for context):\n"
+    lines = ["", "Previous conversation (for context):"]
     for item in conversation_history:
-        history_text += f"User: {item.get('query', '')}\n"
-        history_text += f"Assistant: {item.get('answer', '')}\n\n"
-    return history_text
+        lines.append(f"User: {item.get('query', '')}")
+        lines.append(f"Assistant: {item.get('answer', '')}")
+    return "\n".join(lines) + "\n"
 
 
 def _parse_json_response(text: str) -> Dict[str, Any]:
@@ -87,20 +73,42 @@ def _parse_json_response(text: str) -> Dict[str, Any]:
     return json.loads(cleaned[start:end + 1])
 
 
+def _build_prompt(query: str, context: str, conversation_history: Optional[List] = None) -> str:
+    """Assemble the user prompt from retrieved context and prior turns."""
+    history_text = _format_history(conversation_history)
+    notes_missing = not context or context.strip() == NO_NOTES_CONTEXT
+    if notes_missing:
+        context_block = NO_NOTES_CONTEXT
+        extra_instruction = (
+            "The notes did not contain relevant information for this question. "
+            "Say that clearly. Do not invent facts that are not in the context."
+        )
+    else:
+        context_block = context
+        extra_instruction = (
+            "Answer using only the notes above. When you use a fact, mention the note "
+            "filename from the [From ...] labels. If the notes are incomplete, say so."
+        )
+
+    return (
+        "You are an AI assistant with access to the user's personal Obsidian vault.\n\n"
+        f"Context from their notes:\n{context_block}\n"
+        f"{history_text}\n"
+        f"Current question: {query}\n\n"
+        "If this question refers to something from the previous conversation "
+        '(like "it", "that", or "tell me more"), use the conversation history '
+        "above to resolve the reference.\n"
+        f"{extra_instruction}\n\n"
+        "Answer:"
+    )
+
+
 async def rewrite_query(
     query: str,
     conversation_history: Optional[List] = None,
     retry_hint: Optional[str] = None,
 ) -> Dict[str, str]:
-    """
-    Rewrite a user query into a standalone retrieval query.
-
-    Resolves pronouns from conversation history and, on retry, targets
-    information that the previous search missed.
-
-    Returns:
-        dict: {"rewritten_query": str, "reasoning": str}
-    """
+    """Rewrite a user query into a standalone retrieval query."""
     history_text = _format_history(conversation_history)
     retry_block = ""
     if retry_hint:
@@ -147,16 +155,7 @@ Return JSON with keys rewritten_query and reasoning."""
 
 
 async def grade_documents(query: str, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Grade retrieved note chunks for relevance to the query in one batched call.
-
-    Args:
-        query: The (possibly rewritten) search query.
-        sources: Retrieved source dicts with content_snippet and metadata.
-
-    Returns:
-        list: One dict per source: {"index": int, "relevant": bool, "reason": str}
-    """
+    """Grade retrieved note chunks for relevance to the query in one batched call."""
     if not sources:
         return []
 
@@ -225,7 +224,6 @@ Include every index from 0 to {len(sources) - 1}."""
             if i in by_index:
                 grades.append(by_index[i])
             else:
-                # Model omitted this index — keep it rather than dropping on sloppiness
                 grades.append({
                     "index": i,
                     "relevant": True,
@@ -241,64 +239,20 @@ Include every index from 0 to {len(sources) - 1}."""
 
 
 async def generate_response(query: str, context: str, conversation_history: Optional[List] = None) -> str:
-    """     
-    Generate a response from the LLM based on the query and retrieved context.
-    
-    Args:
-        query (str): The user's query string.
-        context (str): The relevant context retrieved from the knowledge base.
-    
-    Returns:
-        str: The answer generated by the LLM.
-        
-    """
-    history_text = _format_history(conversation_history)
+    """Generate an answer from the LLM for a query with retrieved context."""
+    prompt = _build_prompt(query, context, conversation_history)
     if conversation_history:
         logger.info(f"Using {len(conversation_history)} previous interactions for context")
     else:
         logger.info("No conversation history provided")
 
-    notes_missing = not context or context.strip() == NO_NOTES_CONTEXT
-    if notes_missing:
-        context_block = NO_NOTES_CONTEXT
-        extra_instruction = (
-            "The notes did not contain relevant information for this question. "
-            "Say that clearly. Do not invent facts that are not in the context."
-        )
-    else:
-        context_block = context
-        extra_instruction = (
-            "Answer using only the notes above. When you use a fact, mention the note "
-            "filename from the [From ...] labels. If the notes are incomplete, say so."
-        )
-
-    prompt = f"""You are an AI assistant with access to the user's personal Obsidian vault.
-
-Context from their notes:
-{context_block}
-{history_text}
-Current question: {query}
-
-IMPORTANT: If this question refers to something from the previous conversation (like "it", "that", "tell me more"), use the conversation history above to understand what the user is referring to.
-{extra_instruction}
-
-Answer:"""
     try:
-        logger.info(f"Generating response with context length: {len(context_block)} characters")
+        logger.info(f"Generating response (context: {len(context)} chars)")
         return await ollama_chat(
             [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful assistant that answers from the user's personal notes. "
-                        "Cite note filenames. Never invent details that are not in the provided context."
-                    ),
-                },
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            json_mode=False,
-            temperature=0.2,
-            num_predict=500,
         )
     except httpx.HTTPError as e:
         logger.error(f"HTTP error generating response: {e}")
@@ -309,26 +263,22 @@ Answer:"""
 
 
 async def check_ollama_health() -> bool:
-    """Check if the Ollama LLM service is reachable and operational"""
+    """Return True if Ollama is reachable and the configured model is available."""
     try:
-        # Async health check using httpx
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{OLLAMA_HOST}/api/tags")
+            response = await client.get(f"{config.OLLAMA_HOST}/api/tags")
             response.raise_for_status()
-            models = response.json().get('models', [])
-            
-            # Check if our model is available
-            model_names = [model['name'] for model in models]
-            if DEFAULT_LLM_MODEL not in model_names:
-                logger.warning(f"Specified LLM model '{DEFAULT_LLM_MODEL}' not found in Ollama. Available models: {model_names}")
+            models = response.json().get("models", [])
+
+            model_names = [model["name"] for model in models]
+            if config.LLM_MODEL not in model_names:
+                logger.warning(
+                    f"Model '{config.LLM_MODEL}' not found in Ollama. "
+                    f"Available: {model_names}"
+                )
                 return False
-                
-            logger.info("Ollama health check successful")
             return True
-            
-    except httpx.HTTPError as e:
-        logger.error(f"Ollama health check failed (HTTP): {e}")
-        return False
+
     except Exception as e:
         logger.error(f"Ollama health check failed: {e}")
         return False

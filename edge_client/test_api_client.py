@@ -1,60 +1,52 @@
-"""
-Test script for API client
-Run this to verify your edge client can communicate with the brain server
+"""Manual test script for the brain server connection.
+
+Run this to verify the edge client can reach the brain server and that
+queries return sensible results.
 """
 from api_client import BrainServerClient
 
 
 def main():
-    print("=" * 60)
-    print("🧪 Testing Edge Client → Brain Server Connection")
-    print("=" * 60)
-    
-    # Initialize client
+    print("--- Edge client -> brain server connection test ---")
+
     client = BrainServerClient()
-    
-    # Step 1: Health Check
-    print("\n📡 Step 1: Checking brain server health...")
+
+    print("\nStep 1: health check")
     if not client.check_health():
-        print("\n❌ Brain server is not accessible!")
-        print("   Make sure Docker containers are running:")
-        print("   cd brain_server && docker-compose up -d")
+        print("\nBrain server is not accessible.")
+        print("Make sure the Docker containers are running:")
+        print("  cd brain_server && docker-compose up -d")
         return
-    
-    # Step 2: Test Query
-    print("\n🧠 Step 2: Testing query functionality...")
+
+    print("\nStep 2: queries")
     test_queries = [
         "What is a RAG application?",
-        "Tell me about my notes"
+        "Tell me about my notes",
     ]
-    
+
     for query in test_queries:
-        print(f"\n📝 Query: '{query}'")
+        print(f"\nQuery: '{query}'")
         response = client.query(query, top_k=3)
-        
+
         if response:
-            print(f"\n💬 Answer:\n{response.answer}\n")
-            print(f"📚 Retrieved {len(response.sources)} sources:")
+            print(f"\nAnswer:\n{response.answer}\n")
+            print(f"Retrieved {len(response.sources)} sources:")
             for i, source in enumerate(response.sources, 1):
                 file_name = source.metadata.get('file_name', 'unknown')
-                score = source.similarity_score
-                print(f"   {i}. {file_name} (score: {score:.3f})")
-                print(f"      {source.content_snippet[:80]}...")
+                print(f"  {i}. {file_name} (score: {source.similarity_score:.3f})")
+                print(f"     {source.content_snippet[:80]}...")
         else:
-            print("❌ Query failed!")
-        
-        print("-" * 60)
-    
-    # Step 3: Test Stats
-    print("\n📊 Step 3: Testing health endpoint again...")
-    client.check_health()
-    
-    # Close client
+            print("Query failed.")
+
+    print("\nStep 3: collection stats")
+    stats = client.get_stats()
+    if stats:
+        print(f"Collection: {stats.collection_name}")
+        print(f"Documents:  {stats.total_documents}")
+        print(f"Chunks:     {stats.total_chunks}")
+
     client.close()
-    
-    print("\n" + "=" * 60)
-    print("✅ All tests complete!")
-    print("=" * 60)
+    print("\nDone.")
 
 
 if __name__ == "__main__":

@@ -51,6 +51,8 @@ services:
     networks:
       - brain_network
     restart: unless-stopped
+    working_dir: /workspace
+    command: ["uvicorn", "brain_server.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   # File Watcher Service 
   watcher:
@@ -77,7 +79,10 @@ services:
     networks:
       - brain_network
     restart: unless-stopped
-    command: ["python", "-m", "data_sync.watcher"]
+    healthcheck:
+      disable: true
+    working_dir: /workspace
+    command: ["python", "-m", "brain_server.data_sync.watcher"]
 
 volumes:
   ollama_data:

@@ -1,4 +1,4 @@
-# 🐳 Docker Setup Guide
+# Docker Setup Guide
 
 ## Prerequisites
 
@@ -9,7 +9,7 @@
 
 ## Quick Start
 
-### 1️⃣ Configure Environment
+### 1. Configure environment
 
 ```powershell
 # Copy example env file
@@ -19,7 +19,7 @@ cp .env.example .env
 # - WATCH_DIRECTORY with your Obsidian vault path
 ```
 
-### 2️⃣ Update docker-compose.yml
+### 2. Update docker-compose.yml
 
 Edit `docker-compose.yml` and replace the Obsidian vault path:
 ```yaml
@@ -27,7 +27,7 @@ volumes:
   - C:/Users/YOUR_USERNAME/path/to/obsidian/vault:/data/obsidian:ro
 ```
 
-### 3️⃣ Start Services
+### 3. Start services
 
 ```powershell
 # Build and start all services
@@ -37,7 +37,7 @@ docker-compose up --build
 docker-compose up -d
 ```
 
-### 4️⃣ Pull Llama 3 Model
+### 4. Pull the model
 
 ```powershell
 # Access Ollama container
@@ -47,7 +47,7 @@ docker exec -it brain_ollama ollama pull llama3
 docker exec -it brain_ollama ollama list
 ```
 
-### 5️⃣ Test the API
+### 5. Test the API
 
 Open browser: http://localhost:8000/docs
 
@@ -63,7 +63,7 @@ curl -X POST http://localhost:8000/ingest -H "Content-Type: application/json" -d
 curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "What are my notes about?"}'
 ```
 
-## 🛠️ Useful Commands
+## Useful commands
 
 ```powershell
 # View logs
@@ -85,7 +85,7 @@ docker-compose up --build
 docker exec -it brain_server bash
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### GPU Support (Optional)
 
@@ -111,7 +111,7 @@ Use forward slashes in paths:
 - C:/Users/camar/Documents/vault:/data/obsidian:ro
 ```
 
-## 📊 Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
@@ -138,7 +138,7 @@ Use forward slashes in paths:
     (Host Machine)
 ```
 
-## 🚀 Next Steps
+## Next steps
 
 1. Verify all services are running: `docker-compose ps`
 2. Check brain_server is healthy: `curl http://localhost:8000/health`
