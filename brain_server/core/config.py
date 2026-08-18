@@ -28,3 +28,11 @@ DEBOUNCE_SECONDS = int(os.getenv("DEBOUNCE_SECONDS", "3"))
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+
+def _env_flag(name: str, default: str = "true") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# RAG agent (false keeps one-shot retrieve → generate)
+AGENTIC_RAG = _env_flag("AGENTIC_RAG", "true")

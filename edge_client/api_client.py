@@ -26,7 +26,7 @@ load_dotenv()
 class BrainServerClient:
     """Client for the brain server's REST endpoints."""
 
-    def __init__(self, base_url: Optional[str] = None, timeout: int = 60):
+    def __init__(self, base_url: Optional[str] = None, timeout: int = 120):
         """
         Args:
             base_url: Base URL of the brain server. Defaults to BRAIN_SERVER_URL.
@@ -86,8 +86,15 @@ class BrainServerClient:
             )
             response.raise_for_status()
 
-            return QueryResponse(**response.json())
-
+            query_response = QueryResponse(**response.json())
+            if query_response.agent_trace:
+                trace = query_response.agent_trace
+                print(
+                    f"Agent: rewritten='{(trace.rewritten_query or '')[:60]}' "
+                    f"kept={trace.chunks_kept}/{trace.chunks_retrieved} "
+                    f"rounds={trace.iterations}"
+                )
+            return query_response
         except requests.exceptions.Timeout:
             print(f"Query timed out after {self.timeout}s")
             return None

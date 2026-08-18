@@ -7,6 +7,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI
+from brain_server.core import config
 from brain_server.core.rag_pipeline import (
     ingest_document,
     query_documents,
@@ -14,6 +15,7 @@ from brain_server.core.rag_pipeline import (
     delete_document_by_file_path,
     get_collection_stats,
 )
+from brain_server.core.rag_agent import run_rag_agent
 from brain_server.core.llm_handler import generate_response, check_ollama_health
 from brain_server.core.embeddings import get_chromadb_client
 from shared.models import (
@@ -26,6 +28,7 @@ from shared.models import (
     DocumentListResponse,
     StatsResponse,
     HealthCheckResponse,
+    AgentTrace,
 )
 import time
 from datetime import datetime
@@ -54,6 +57,21 @@ async def ingest(request: IngestRequest):
 async def query(request: QueryRequest):
     """Answer a question using retrieved context and the LLM."""
     start = time.time()
+
+    if config.AGENTIC_RAG:
+        result = await run_rag_agent(
+            query=request.query,
+            conversation_history=request.conversation_history,
+            top_k=request.top_k,
+            filter_metadata=request.filter_metadata,
+        )
+        return QueryResponse(
+            query=request.query,
+            answer=result["answer"],
+            sources=result["sources"],
+            processing_time=time.time() - start,
+            agent_trace=AgentTrace(**result["agent_trace"]),
+        )
 
     rag_result = await query_documents(
         query=request.query,
